@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>网络安全本地知识中枢</title>
+<style>
+  body{margin:0;font-family:"Segoe UI","Microsoft YaHei",sans-serif;background:#fff;color:#111827;}
+  header{height:60px;background:#f3f4f6;display:flex;align-items:center;justify-content:space-between;
+         padding:0 18px;border-bottom:1px solid #e5e7eb;}
+  header .t{font-size:16px;color:#1d4ed8;font-weight:700}
+  header .s{font-size:12px;color:#6b7280}
+  .wrap{display:flex;height:calc(100vh - 60px);}
+  nav{width:220px;background:#f9fafb;border-right:1px solid #e5e7eb;padding:14px 0;}
+  nav a{display:block;padding:10px 18px;color:#374151;text-decoration:none;font-size:14px;}
+  nav a.active,nav a:hover{background:#e5e7eb;color:#1d4ed8;}
+  main{flex:1;padding:18px;overflow:auto;}
+  .bar{display:flex;gap:10px;align-items:center;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;
+       padding:12px;margin-bottom:14px;}
+  .bar input{flex:1;border:1px solid #d1d5db;border-radius:8px;padding:10px;outline:none;}
+  .bar button{border:0;border-radius:8px;padding:10px 16px;background:#1d4ed8;color:#fff;font-weight:700;cursor:pointer;}
+  .bar button:disabled{opacity:.6;cursor:not-allowed;}
+  .meta{display:flex;gap:10px;align-items:center;margin:8px 2px 14px;color:#6b7280;font-size:12px;}
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;}
+  .card{border:1px solid #e5e7eb;border-radius:12px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.06);padding:14px;}
+  .card h3{margin:0 0 8px 0;font-size:15px;color:#1d4ed8;}
+  .card p{margin:0;color:#374151;font-size:13px;line-height:1.6;}
+  .tags{margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;}
+  .tag{font-size:12px;background:#e5e7eb;color:#111827;border-radius:999px;padding:4px 10px;}
+  .pill{font-size:12px;background:#eef2ff;color:#3730a3;border-radius:999px;padding:4px 10px;}
+  .err{border:1px solid #fecaca;background:#fef2f2;color:#991b1b;padding:10px 12px;border-radius:10px;margin-top:10px;display:none;}
+  footer{padding:10px 2px;color:#6b7280;font-size:12px;}
+</style>
+</head>
+<body>
+<header>
+  <div class="t">网络安全本地知识中枢（无 GPU）</div>
+  <div class="s">入口：80端口（Nginx） / API：/api/search</div>
+</header>
+
+<div class="wrap">
+  <nav>
+    <a class="active">🔍 知识搜索</a>
+    <a>📚 漏洞知识库</a>
+    <a>⚔️ 红蓝队知识</a>
+    <a>🧩 安全服务能力</a>
+    <a>🔗 知识关联分析</a>
+    <a>👥 用户与权限</a>
+    <a>⚙️ 系统配置</a>
+  </nav>
+
+  <main>
+    <div class="bar">
+      <input id="q" placeholder="请输入关键词（如：Log4j / CVE-2021-44228 / 横向移动）" />
+      <button id="btn">搜索</button>
+    </div>
+
+    <div class="meta">
+      <span class="pill" id="stat">就绪</span>
+      <span id="lat"></span>
+    </div>
+
+    <div class="err" id="err"></div>
+
+    <div class="cards" id="cards"></div>
+
+    <footer>提示：该页面为当前阶段前端展示原型，数据来自 /api/search 反代到后端 8000。</footer>
+  </main>
+</div>
+
+<script>
+const $ = (id)=>document.getElementById(id);
+
+function escapeHtml(s){
+  return (s||"").replace(/[&<>"']/g, c=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+function renderHits(resp){
+  const cards = $("cards");
+  cards.innerHTML = "";
+  const hits = (resp && resp.hits) ? resp.hits : [];
+  if(!hits.length){
+    cards.innerHTML = `<div class="card"><h3>无结果</h3><p>未检索到匹配内容，请更换关键词。</p></div>`;
+    return;
+  }
+  for(const h of hits){
+    const src = h.source || {};
+    const title = (h.highlight && h.highlight.title && h.highlight.title[0]) ? h.highlight.title[0] : escapeHtml(src.title||"(无标题)");
+    const content = escapeHtml(src.content||"");
+    const docType = escapeHtml(src.doc_type||"");
+    const cve = escapeHtml(src.cve_id||"");
+    const tags = Array.isArray(src.tags) ? src.tags : [];
+    cards.insertAdjacentHTML("beforeend", `
+      <div class="card">
+        <h3>${title}</h3>
+        <p>${content}</p>
+        <div class="tags">
+          ${docType?`<span class="tag">${docType}</span>`:""}
+          ${cve?`<span class="tag">${cve}</span>`:""}
+          ${tags.map(t=>`<span class="tag">${escapeHtml(t)}</span>`).join("")}
+        </div>
+      </div>
+    `);
+  }
+}
+
+async function search(){
+  const q = $("q").value.trim();
+  $("err").style.display="none";
+  $("btn").disabled = true;
+  $("stat").textContent = "查询中…";
+
+  const t0 = performance.now();
+  try{
+    const url = `/api/search?q=${encodeURIComponent(q||"")}`;
+    const r = await fetch(url, {headers: {"Accept":"application/json"}});
+    const text = await r.text();
+    let data;
+    try{ data = JSON.parse(text); } catch(e){ throw new Error("返回非JSON：" + text.slice(0,200)); }
+    renderHits(data);
+    $("stat").textContent = `OK（命中 ${data?.total?.value ?? 0}）`;
+  }catch(e){
+    $("err").style.display="block";
+    $("err").textContent = "请求失败：" + (e?.message||e);
+    $("stat").textContent = "失败";
+  }finally{
+    const t1 = performance.now();
+    $("lat").textContent = `耗时 ${(t1-t0).toFixed(0)} ms`;
+    $("btn").disabled = false;
+  }
+}
+
+$("btn").addEventListener("click", search);
+$("q").addEventListener("keydown", (e)=>{ if(e.key==="Enter") search(); });
+
+// 默认给一个示例
+$("q").value = "Log4j";
+search();
+</script>
+</body>
+</html>
